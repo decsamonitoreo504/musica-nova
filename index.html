@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Programador de Música</title>
+    <!-- Incluye Tailwind CSS para un diseño moderno y responsive -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Fuente Inter de Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            @apply bg-gray-900 text-gray-100;
+        }
+        .container-bg {
+            background-color: #2D3748; /* Un gris oscuro para el contenedor principal */
+        }
+        .btn-primary {
+            @apply bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-full transition duration-300 ease-in-out transform hover:scale-105 shadow-lg;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+    <div class="container-bg w-full max-w-2xl p-6 rounded-3xl shadow-2xl space-y-8">
+        <h1 class="text-4xl font-bold text-center text-white">Programador de Música</h1>
+        <p class="text-center text-gray-300">Programa canciones para que suenen en días y horas específicas. Tu horario se guarda automáticamente.</p>
+
+        <!-- Sección de monitoreo remoto (simulado) -->
+        <div class="bg-gray-800 p-4 rounded-xl shadow-inner border border-gray-700">
+            <h2 class="text-xl font-semibold text-white mb-2">Estado de Conexión</h2>
+            <p id="userIdDisplay" class="text-sm text-gray-400">ID de Usuario: <span id="userId">Cargando...</span></p>
+            <p class="text-sm text-gray-400">Usa este ID para monitorear tu horario en otros dispositivos.</p>
+        </div>
+
+        <!-- Formulario para agregar una canción -->
+        <form id="scheduleForm" class="bg-gray-800 p-6 rounded-2xl shadow-inner space-y-4">
+            <div class="grid md:grid-cols-2 gap-4">
+                <div>
+                    <label for="songName" class="block text-sm font-medium text-gray-300 mb-1">Nombre de la Canción</label>
+                    <input type="text" id="songName" class="w-full px-4 py-2 rounded-lg bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Ej: Canción Épica" required>
+                </div>
+                <div>
+                    <label for="songUrl" class="block text-sm font-medium text-gray-300 mb-1">URL del Audio</label>
+                    <input type="url" id="songUrl" class="w-full px-4 py-2 rounded-lg bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Ej: https://example.com/song.mp3" required>
+                </div>
+                <div>
+                    <label for="dayOfWeek" class="block text-sm font-medium text-gray-300 mb-1">Día de la Semana</label>
+                    <select id="dayOfWeek" class="w-full px-4 py-2 rounded-lg bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" required>
+                        <option value="0">Domingo</option>
+                        <option value="1">Lunes</option>
+                        <option value="2">Martes</option>
+                        <option value="3">Miércoles</option>
+                        <option value="4">Jueves</option>
+                        <option value="5">Viernes</option>
+                        <option value="6">Sábado</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="time" class="block text-sm font-medium text-gray-300 mb-1">Hora (HH:mm)</label>
+                    <input type="time" id="time" class="w-full px-4 py-2 rounded-lg bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" required>
+                </div>
+            </div>
+            <button type="submit" class="w-full btn-primary">
+                Programar Canción
+            </button>
+        </form>
+
+        <!-- Lista de canciones programadas -->
+        <div class="bg-gray-800 p-6 rounded-2xl shadow-inner">
+            <h2 class="text-2xl font-semibold text-white mb-4 text-center">Canciones Programadas</h2>
+            <ul id="scheduleList" class="space-y-4">
+                <li class="text-gray-400 text-center" id="loadingMessage">Cargando horario...</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Contenedor para el audio y mensajes de estado -->
+    <div class="hidden">
+        <audio id="audioPlayer"></audio>
+        <div id="statusMessage" class="fixed bottom-4 right-4 bg-green-500 text-white p-3 rounded-xl shadow-lg transition-transform transform -translate-y-full opacity-0"></div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, addDoc, onSnapshot, deleteDoc, getDoc, setDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Establecer el nivel de registro para depuración
+        setLogLevel('debug');
+
+        // Variables globales proporcionadas por el entorno de Canvas
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db, auth, userId;
+
+        // Inicializar Firebase y autenticar
+        async function initializeFirebase() {
+            if (!firebaseConfig) {
+                console.error("Firebase config is missing.");
+                showStatus("Error: Configuración de Firebase no disponible.");
+                return;
+            }
+
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        document.getElementById('userId').textContent = userId;
+                        console.log("Usuario autenticado. UID:", userId);
+                        // Escuchar los datos del usuario después de la autenticación
+                        listenForScheduleChanges();
+                        startScheduler();
+                    } else {
+                        console.log("No hay usuario autenticado, intentando iniciar sesión...");
+                        try {
+                            if (initialAuthToken) {
+                                await signInWithCustomToken(auth, initialAuthToken);
+                            } else {
+                                await signInAnonymously(auth);
+                            }
+                            console.log("Inicio de sesión exitoso.");
+                        } catch (error) {
+                            console.error("Error al iniciar sesión:", error);
+                            showStatus(`Error de autenticación: ${error.message}`);
+                        }
+                    }
+                });
+            } catch (e) {
+                console.error("Error al inicializar Firebase:", e);
+                showStatus(`Error al inicializar la app: ${e.message}`);
+            }
+        }
+
+        // Mostrar mensajes de estado en la UI
+        function showStatus(message, isError = false) {
+            const statusBox = document.getElementById('statusMessage');
+            statusBox.textContent = message;
+            statusBox.className = `fixed bottom-4 right-4 p-3 rounded-xl shadow-lg transition-transform transform translate-y-0 opacity-100 ${isError ? 'bg-red-600' : 'bg-green-600'}`;
+            setTimeout(() => {
+                statusBox.className = `fixed bottom-4 right-4 p-3 rounded-xl shadow-lg transition-transform transform -translate-y-full opacity-0`;
+            }, 3000);
+        }
+
+        // Renderizar la lista de canciones en la UI
+        function renderSchedule(schedules) {
+            const scheduleList = document.getElementById('scheduleList');
+            const loadingMessage = document.getElementById('loadingMessage');
+            scheduleList.innerHTML = '';
+            if (loadingMessage) {
+                loadingMessage.remove();
+            }
+
+            if (schedules.length === 0) {
+                scheduleList.innerHTML = '<li class="text-gray-400 text-center">No hay canciones programadas. ¡Agrega una!</li>';
+                return;
+            }
+
+            schedules.forEach(schedule => {
+                const li = document.createElement('li');
+                li.className = "bg-gray-700 p-4 rounded-xl shadow-lg flex items-center justify-between transition-all duration-300 hover:bg-gray-600";
+                
+                const timeStr = schedule.time;
+                const [hours, minutes] = timeStr.split(':').map(Number);
+                const dayStr = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][schedule.day];
+
+                li.innerHTML = `
+                    <div>
+                        <h3 class="text-lg font-semibold text-white">${schedule.songName}</h3>
+                        <p class="text-sm text-gray-400">${dayStr} a las ${hours}:${String(minutes).padStart(2, '0')}</p>
+                    </div>
+                    <button class="delete-btn bg-red-600 hover:bg-red-700 text-white text-sm font-bold py-1 px-3 rounded-full transition-colors" data-id="${schedule.id}">Eliminar</button>
+                `;
+                scheduleList.appendChild(li);
+            });
+            attachDeleteListeners();
+        }
+
+        // Adjuntar eventos de eliminación
+        function attachDeleteListeners() {
+            document.querySelectorAll('.delete-btn').forEach(button => {
+                button.addEventListener('click', async (e) => {
+                    const docId = e.target.getAttribute('data-id');
+                    if (docId) {
+                        await deleteSchedule(docId);
+                    }
+                });
+            });
+        }
+
+        // Eliminar una canción de Firestore
+        async function deleteSchedule(docId) {
+            try {
+                const docRef = doc(db, `artifacts/${appId}/public/data/schedules`, docId);
+                await deleteDoc(docRef);
+                showStatus("Canción eliminada correctamente.");
+            } catch (e) {
+                console.error("Error al eliminar el documento:", e);
+                showStatus(`Error al eliminar: ${e.message}`, true);
+            }
+        }
+
+        // Escuchar cambios en la base de datos en tiempo real
+        function listenForScheduleChanges() {
+            if (!db || !userId) return;
+
+            const schedulesColRef = collection(db, `artifacts/${appId}/public/data/schedules`);
+            
+            // Usar onSnapshot para escuchar cambios en tiempo real
+            onSnapshot(schedulesColRef, (snapshot) => {
+                const scheduledSongs = [];
+                snapshot.forEach(doc => {
+                    scheduledSongs.push({ id: doc.id, ...doc.data() });
+                });
+                renderSchedule(scheduledSongs);
+                // Guardar la lista para el temporizador
+                localStorage.setItem('scheduledSongs', JSON.stringify(scheduledSongs));
+            }, (error) => {
+                console.error("Error al escuchar cambios en Firestore:", error);
+                showStatus("Error al cargar el horario. Inténtalo de nuevo más tarde.", true);
+            });
+        }
+
+        // Lógica para reproducir canciones a la hora programada
+        function startScheduler() {
+            setInterval(() => {
+                const now = new Date();
+                const currentDay = now.getDay(); // 0 (Domingo) a 6 (Sábado)
+                const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+                
+                const scheduledSongs = JSON.parse(localStorage.getItem('scheduledSongs') || '[]');
+
+                scheduledSongs.forEach(song => {
+                    if (song.day == currentDay && song.time === currentTime) {
+                        const player = document.getElementById('audioPlayer');
+                        player.src = song.songUrl;
+                        player.play().catch(e => {
+                            console.error("Error al reproducir el audio:", e);
+                            showStatus(`No se pudo reproducir: ${song.songName}.`, true);
+                        });
+                        showStatus(`¡Reproduciendo: ${song.songName}!`);
+                    }
+                });
+            }, 60000); // Revisa cada minuto
+        }
+
+        // Manejar el envío del formulario
+        document.getElementById('scheduleForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const form = e.target;
+            const newSchedule = {
+                songName: form.songName.value,
+                songUrl: form.songUrl.value,
+                day: parseInt(form.dayOfWeek.value),
+                time: form.time.value
+            };
+
+            if (!db) {
+                showStatus("La base de datos no está lista. Por favor, espera...", true);
+                return;
+            }
+
+            try {
+                const docRef = await addDoc(collection(db, `artifacts/${appId}/public/data/schedules`), newSchedule);
+                console.log("Documento escrito con ID:", docRef.id);
+                showStatus("Canción programada con éxito.");
+                form.reset();
+            } catch (e) {
+                console.error("Error al añadir el documento:", e);
+                showStatus(`Error al programar la canción: ${e.message}`, true);
+            }
+        });
+
+        // Iniciar la aplicación al cargar la ventana
+        window.onload = initializeFirebase;
+
+    </script>
+</body>
+</html>
